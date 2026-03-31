@@ -86,6 +86,8 @@ The runner will look for these files from the current directory upward:
 
 `assert.config.local.json` is merged on top of `assert.config.json`.
 
+For safety, API host overrides are only read from `ASSERT_API_URL` or `assert.config.local.json`. A committed `assert.config.json` cannot change the Assert API host.
+
 Recommended setup:
 
 - Commit `assert.config.json`

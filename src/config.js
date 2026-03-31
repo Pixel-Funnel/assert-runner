@@ -103,6 +103,8 @@ function loadAssertConfig(options = {}) {
 
   let configDir = null;
   let files = [];
+  let baseConfig = {};
+  let localConfig = {};
   if (configPath) {
     const explicit = resolveExplicitConfigTarget(cwd, configPath);
     configDir = explicit.configDir;
@@ -116,11 +118,20 @@ function loadAssertConfig(options = {}) {
 
   let config = {};
   for (const filePath of files) {
-    config = mergeConfig(config, readConfigFile(filePath));
+    const parsed = readConfigFile(filePath);
+    const baseName = path.basename(filePath);
+    if (baseName === LOCAL_CONFIG_FILE) {
+      localConfig = mergeConfig(localConfig, parsed);
+    } else {
+      baseConfig = mergeConfig(baseConfig, parsed);
+    }
+    config = mergeConfig(config, parsed);
   }
 
   return {
     config,
+    baseConfig,
+    localConfig,
     configDir,
     files,
   };
@@ -215,6 +226,7 @@ function resolveCliConfig(rawOpts, defaults = {}) {
   const env = defaults.env || process.env;
   const loaded = loadAssertConfig({ cwd: defaults.cwd, configPath: rawOpts.configPath || env.ASSERT_CONFIG });
   const common = loaded.config || {};
+  const local = loaded.localConfig || {};
   const configDir = loaded.configDir || defaults.cwd || process.cwd();
 
   return {
@@ -229,7 +241,7 @@ function resolveCliConfig(rawOpts, defaults = {}) {
       (rawOpts.apiBase ||
         env.ASSERT_API_URL ||
         env.ASSERT_BASE_URL ||
-        readString(common, ['apiUrl', 'baseUrl', 'hostUrl']) ||
+        readString(local, ['apiUrl', 'baseUrl', 'hostUrl']) ||
         defaults.apiBase ||
         '').replace(/\/$/, ''),
     workDir:
@@ -247,7 +259,9 @@ function resolveRunnerConfig(rawOpts = {}, defaults = {}) {
   const env = defaults.env || process.env;
   const loaded = loadAssertConfig({ cwd: defaults.cwd, configPath: rawOpts.configPath || env.ASSERT_CONFIG });
   const common = loaded.config || {};
+  const local = loaded.localConfig || {};
   const runner = sectionFor(common, 'runner');
+  const localRunner = sectionFor(local, 'runner');
   const configDir = loaded.configDir || defaults.cwd || process.cwd();
 
   return {
@@ -256,8 +270,8 @@ function resolveRunnerConfig(rawOpts = {}, defaults = {}) {
     apiBase:
       (env.ASSERT_API_URL ||
         env.ASSERT_BASE_URL ||
-        readString(runner, ['apiUrl', 'baseUrl', 'hostUrl']) ||
-        readString(common, ['apiUrl', 'baseUrl', 'hostUrl']) ||
+        readString(localRunner, ['apiUrl', 'baseUrl', 'hostUrl']) ||
+        readString(local, ['apiUrl', 'baseUrl', 'hostUrl']) ||
         defaults.apiBase ||
         '').replace(/\/$/, ''),
     workDir:
