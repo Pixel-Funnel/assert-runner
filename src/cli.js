@@ -4,6 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const dotenv = require('dotenv');
+const { resolveCliConfig, CONFIG_FILE, LOCAL_CONFIG_FILE } = require('./config');
 
 dotenv.config();
 
@@ -13,34 +14,38 @@ const USER_AGENT = 'assert-cli/1.0';
 
 function printUsage() {
   console.log(`Usage:
-  assert run <file-or-dir> [...more paths] [--project <id>] [--api-url <url>] [--work-dir <path>]
+  assert run [file-dir-or-glob ...more paths] [--project <id>] [--work-dir <path>] [--config <path>]
+  assert [file-dir-or-glob ...more paths]
 
 Environment:
-  ASSERT_API_KEY         Required API key
-  ASSERT_API_URL         Optional API base URL (default: ${DEFAULT_API_BASE})
+  ASSERT_API_KEY         Preferred API key env var
   ASSERT_WORK_DIR        Optional work directory (default: ${DEFAULT_WORK_DIR})
+
+Config files:
+  ${CONFIG_FILE}         Shared project config, discovered from the current directory upward
+  ${LOCAL_CONFIG_FILE}   Local override file, merged on top when present
 `);
 }
 
 function parseArgs(argv) {
   const raw = Array.isArray(argv) ? [...argv] : [];
-  if (!raw.length || raw[0] === '--help' || raw[0] === '-h' || raw[0] === 'help') {
+  if (raw[0] === '--help' || raw[0] === '-h' || raw[0] === 'help') {
     return { help: true };
   }
 
-  let command = raw[0];
-  let args = raw.slice(1);
-  if (command !== 'run') {
-    command = 'run';
-    args = raw;
+  let command = 'run';
+  let args = raw;
+  if (raw[0] === 'run') {
+    args = raw.slice(1);
   }
 
   const opts = {
     command,
     inputs: [],
-    projectId: process.env.ASSERT_PROJECT_ID || null,
-    apiBase: (process.env.ASSERT_API_URL || process.env.ASSERT_BASE_URL || DEFAULT_API_BASE).replace(/\/$/, ''),
-    workDir: process.env.ASSERT_WORK_DIR || DEFAULT_WORK_DIR,
+    configPath: process.env.ASSERT_CONFIG || null,
+    projectId: null,
+    apiBase: null,
+    workDir: null,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -55,6 +60,10 @@ function parseArgs(argv) {
     }
     if (arg === '--work-dir') {
       opts.workDir = args[++i] || opts.workDir;
+      continue;
+    }
+    if (arg === '--config') {
+      opts.configPath = args[++i] || opts.configPath;
       continue;
     }
     if (arg === '--help' || arg === '-h') {
@@ -74,35 +83,117 @@ function normalizeDisplayPath(absPath) {
   return path.basename(absPath);
 }
 
+function hasGlobMagic(value) {
+  return /[*?\[]/.test(String(value || ''));
+}
+
+function segmentToRegex(segment) {
+  const escaped = String(segment || '')
+    .replace(/[.+^${}()|\\]/g, '\\$&')
+    .replace(/\*/g, '[^/]*')
+    .replace(/\?/g, '[^/]');
+  return new RegExp(`^${escaped}$`);
+}
+
+function matchGlobSegments(patternSegments, fileSegments, pIndex = 0, fIndex = 0) {
+  if (pIndex === patternSegments.length) return fIndex === fileSegments.length;
+
+  const pattern = patternSegments[pIndex];
+  if (pattern === '**') {
+    if (pIndex === patternSegments.length - 1) return true;
+    for (let i = fIndex; i <= fileSegments.length; i++) {
+      if (matchGlobSegments(patternSegments, fileSegments, pIndex + 1, i)) return true;
+    }
+    return false;
+  }
+
+  if (fIndex >= fileSegments.length) return false;
+  return segmentToRegex(pattern).test(fileSegments[fIndex]) &&
+    matchGlobSegments(patternSegments, fileSegments, pIndex + 1, fIndex + 1);
+}
+
+function expandGlob(pattern) {
+  const absolutePattern = path.resolve(pattern);
+  const absoluteSegments = absolutePattern.split(path.sep).filter(Boolean);
+  const firstMagicIndex = absoluteSegments.findIndex((segment) => hasGlobMagic(segment) || segment === '**');
+  const baseSegments = firstMagicIndex === -1 ? absoluteSegments : absoluteSegments.slice(0, firstMagicIndex);
+  const baseDir = path.isAbsolute(absolutePattern)
+    ? path.join(path.sep, ...baseSegments)
+    : path.resolve(...baseSegments);
+  const patternSegments = absoluteSegments.slice(firstMagicIndex === -1 ? absoluteSegments.length : firstMagicIndex);
+  const found = [];
+
+  function walk(currentDir) {
+    for (const entry of fs.readdirSync(currentDir, { withFileTypes: true })) {
+      if (entry.isDirectory() && (entry.name === 'node_modules' || entry.name === '.git')) continue;
+      const abs = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        walk(abs);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const relativeSegments = path.relative(baseDir, abs).split(path.sep).filter(Boolean);
+      if (matchGlobSegments(patternSegments, relativeSegments)) {
+        found.push(abs);
+      }
+    }
+  }
+
+  if (fs.existsSync(baseDir) && fs.statSync(baseDir).isDirectory()) {
+    walk(baseDir);
+  }
+  return found;
+}
+
 function collectMarkdownFiles(inputs) {
   const found = [];
   const seen = new Set();
 
-  function walk(target) {
-    const abs = path.resolve(target);
-    if (seen.has(abs)) return;
-    seen.add(abs);
+  function addFile(abs) {
+    if (!abs.toLowerCase().endsWith('.md')) return;
+    found.push({
+      absPath: abs,
+      relPath: normalizeDisplayPath(abs),
+      content: fs.readFileSync(abs, 'utf8'),
+    });
+  }
 
-    if (!fs.existsSync(abs)) {
-      throw new Error(`Path not found: ${target}`);
-    }
+  function walkExisting(absPath) {
+    const resolved = path.resolve(absPath);
+    if (seen.has(resolved)) return;
+    seen.add(resolved);
 
-    const stat = fs.statSync(abs);
+    const stat = fs.statSync(resolved);
     if (stat.isDirectory()) {
-      for (const entry of fs.readdirSync(abs, { withFileTypes: true })) {
+      for (const entry of fs.readdirSync(resolved, { withFileTypes: true })) {
         if (entry.isDirectory() && (entry.name === 'node_modules' || entry.name === '.git')) continue;
-        walk(path.join(abs, entry.name));
+        walkExisting(path.join(resolved, entry.name));
       }
       return;
     }
 
-    if (stat.isFile() && abs.toLowerCase().endsWith('.md')) {
-      found.push({
-        absPath: abs,
-        relPath: normalizeDisplayPath(abs),
-        content: fs.readFileSync(abs, 'utf8'),
-      });
+    if (stat.isFile()) {
+      addFile(resolved);
     }
+  }
+
+  function walk(target) {
+    const abs = path.resolve(target);
+    if (fs.existsSync(abs)) {
+      walkExisting(abs);
+      return;
+    }
+    if (hasGlobMagic(target)) {
+      const matches = expandGlob(target);
+      if (!matches.length) {
+        throw new Error(`No files matched pattern: ${target}`);
+      }
+      for (const match of matches) {
+        walkExisting(match);
+      }
+      return;
+    }
+    throw new Error(`Path not found: ${target}`);
   }
 
   for (const input of inputs) walk(input);
@@ -202,12 +293,14 @@ async function uploadArtifact(apiBase, apiKey, runId, relPath, content, encoding
 
 async function uploadScreenshots(apiBase, apiKey, workDir, runId, results) {
   const uploaded = new Map();
+  const failures = [];
   for (const scenario of results || []) {
     const steps = Array.isArray(scenario.steps) ? scenario.steps : [];
     for (const step of steps) {
       if (!step || !step.screenshot) continue;
       const info = buildLocalArtifactPath(workDir, runId, step.screenshot);
       if (!info || !fs.existsSync(info.localPath)) {
+        failures.push(`${step.title || 'Step'}: local screenshot file missing`);
         step.screenshot = null;
         continue;
       }
@@ -216,12 +309,16 @@ async function uploadScreenshots(apiBase, apiKey, workDir, runId, results) {
           const content = fs.readFileSync(info.localPath).toString('base64');
           const uploadedArtifact = await uploadArtifact(apiBase, apiKey, runId, info.relPath, content, 'base64');
           uploaded.set(info.relPath, toAbsoluteUrl(apiBase, uploadedArtifact.url || step.screenshot));
-        } catch {
+        } catch (err) {
+          failures.push(`${step.title || 'Step'}: ${err?.message || String(err)}`);
           uploaded.set(info.relPath, null);
         }
       }
       step.screenshot = uploaded.get(info.relPath);
     }
+  }
+  if (failures.length) {
+    throw new Error(`Failed to upload ${failures.length} screenshot artifact${failures.length === 1 ? '' : 's'}: ${failures[0]}`);
   }
   return results;
 }
@@ -239,8 +336,35 @@ function runnerErrorResult(message) {
   }];
 }
 
+function formatStructuredBlock(value) {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value || '');
+  }
+}
+
 function logEvent(event) {
   if (!event || typeof event !== 'object') return;
+  if (event.type === 'auth:start') {
+    process.stdout.write(`[assert] Auth: signing in${event.url ? ` at ${event.url}` : ''}\n`);
+    return;
+  }
+  if (event.type === 'auth:redirect') {
+    process.stdout.write(`[assert] Auth: login required${event.targetUrl ? ` for ${event.targetUrl}` : ''}\n`);
+    return;
+  }
+  if (event.type === 'auth:complete') {
+    process.stdout.write(`[assert] Auth: session ready\n`);
+    return;
+  }
+  if (event.type === 'auth:error') {
+    process.stdout.write(`[assert] Auth: failed${event.message ? `: ${event.message}` : ''}\n`);
+    if (event.details) {
+      process.stdout.write(`${formatStructuredBlock(event.details)}\n`);
+    }
+    return;
+  }
   if (event.type === 'scenario:start') {
     process.stdout.write(`\n[assert] Scenario ${event.index}: ${event.scenario || ''}\n`);
     return;
@@ -352,6 +476,29 @@ function createRunReporter({ prefix = 'assert' } = {}) {
   }
 
   function handleInteractiveEvent(event) {
+    if (event.type === 'auth:start') {
+      writeLine(`[${prefix}] Auth: signing in${event.url ? ` at ${event.url}` : ''}`);
+      return;
+    }
+
+    if (event.type === 'auth:redirect') {
+      writeLine(`[${prefix}] Auth: login required${event.targetUrl ? ` for ${event.targetUrl}` : ''}`);
+      return;
+    }
+
+    if (event.type === 'auth:complete') {
+      writeLine(`[${prefix}] Auth: session ready`);
+      return;
+    }
+
+    if (event.type === 'auth:error') {
+      writeLine(`[${prefix}] Auth: failed${event.message ? `: ${truncateText(event.message, 180)}` : ''}`);
+      if (event.details) {
+        writeLine(formatStructuredBlock(event.details));
+      }
+      return;
+    }
+
     if (event.type === 'run:start') {
       state.totalScenarios = Number(event.totalScenarios) || state.totalScenarios;
       writeLine(`[${prefix}] Prepared ${state.totalScenarios || '?'} scenario${state.totalScenarios === 1 ? '' : 's'} for execution`);
@@ -435,12 +582,12 @@ function createRunReporter({ prefix = 'assert' } = {}) {
 }
 
 async function runCommand(opts) {
-  const apiKey = process.env.ASSERT_API_KEY;
+  const apiKey = opts.apiKey;
   if (!apiKey) {
-    throw new Error('ASSERT_API_KEY environment variable is required');
+    throw new Error('Assert API key is required. Set ASSERT_API_KEY, configure projectApiKeyEnv, or store projectApiKey in assert.config.json');
   }
   if (!opts.inputs.length) {
-    throw new Error('At least one Markdown file or directory is required');
+    throw new Error('At least one Markdown file, directory, or glob pattern is required. Pass a path, or set input in assert.config.json');
   }
 
   const mdFiles = collectMarkdownFiles(opts.inputs);
@@ -472,6 +619,7 @@ async function runCommand(opts) {
 
   const started = await request('POST', `${opts.apiBase}/v1/runs/${runId}/start`, apiKey, {}, 30000);
   const tests = Array.isArray(started && started.tests) ? started.tests : [];
+  const auth = started && typeof started.auth === 'object' ? started.auth : null;
   if (!tests.length) {
     throw new Error('Service did not return any prepared tests');
   }
@@ -483,7 +631,7 @@ async function runCommand(opts) {
   let results;
   try {
     const { executePreparedTests } = require('./executor');
-    results = await executePreparedTests(tests, runId, { workDir, onEvent: reporter.event });
+    results = await executePreparedTests(tests, runId, { workDir, onEvent: reporter.event, auth });
   } catch (err) {
     reporter.stop();
     const message = err && err.message ? err.message : String(err);
@@ -512,16 +660,22 @@ async function runCommand(opts) {
 }
 
 async function main(argv = process.argv.slice(2)) {
-  const opts = parseArgs(argv);
-  if (opts.help) {
+  const rawOpts = parseArgs(argv);
+  if (rawOpts.help) {
     printUsage();
     return 0;
   }
 
-  if (opts.command !== 'run') {
-    throw new Error(`Unknown command: ${opts.command}`);
+  if (rawOpts.command !== 'run') {
+    throw new Error(`Unknown command: ${rawOpts.command}`);
   }
 
+  const opts = resolveCliConfig(rawOpts, {
+    cwd: process.cwd(),
+    env: process.env,
+    apiBase: DEFAULT_API_BASE,
+    workDir: DEFAULT_WORK_DIR,
+  });
   return runCommand(opts);
 }
 

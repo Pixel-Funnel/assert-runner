@@ -18,6 +18,7 @@
   "files": [
     "bin/",
     "src/cli.js",
+    "src/config.js",
     "src/executor.js"
   ],
   "dependencies": {

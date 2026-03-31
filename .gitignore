@@ -4,6 +4,7 @@ package-lock.json
 .env
 .env.*
 .npmrc
+assert.config.local.json
 
 runtime/
 runs/
