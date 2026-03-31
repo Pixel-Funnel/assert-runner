@@ -174,6 +174,18 @@ function buildLocalArtifactPath(workDir, runId, publicPath) {
   };
 }
 
+function toAbsoluteUrl(baseUrl, value) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  try {
+    return new URL(raw).toString();
+  } catch {}
+  try {
+    return new URL(raw, `${String(baseUrl || '').replace(/\/$/, '')}/`).toString();
+  } catch {}
+  return raw;
+}
+
 async function uploadArtifact(apiBase, apiKey, runId, relPath, content, encoding) {
   return request(
     'POST',
@@ -203,7 +215,7 @@ async function uploadScreenshots(apiBase, apiKey, workDir, runId, results) {
         try {
           const content = fs.readFileSync(info.localPath).toString('base64');
           const uploadedArtifact = await uploadArtifact(apiBase, apiKey, runId, info.relPath, content, 'base64');
-          uploaded.set(info.relPath, uploadedArtifact.url || step.screenshot);
+          uploaded.set(info.relPath, toAbsoluteUrl(apiBase, uploadedArtifact.url || step.screenshot));
         } catch {
           uploaded.set(info.relPath, null);
         }
@@ -245,6 +257,181 @@ function logEvent(event) {
     process.stdout.write(`    FAIL ${event.title || ''}${event.error ? `: ${event.error}` : ''}\n`);
     return;
   }
+}
+
+function truncateText(value, maxLength) {
+  const text = String(value || '');
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, Math.max(0, maxLength - 3))}...`;
+}
+
+function buildProgressBar(completed, total) {
+  const safeTotal = Math.max(Number(total) || 0, 1);
+  const width = Math.max(10, Math.min(24, Math.floor((process.stdout.columns || 80) / 4)));
+  const ratio = Math.max(0, Math.min(1, completed / safeTotal));
+  const filled = Math.round(width * ratio);
+  return `[${'#'.repeat(filled)}${'-'.repeat(width - filled)}]`;
+}
+
+function createRunReporter({ prefix = 'assert' } = {}) {
+  const interactive = Boolean(process.stdout.isTTY);
+  const useColor = interactive && !Object.prototype.hasOwnProperty.call(process.env, 'NO_COLOR');
+  const spinnerFrames = ['-', '\\', '|', '/'];
+  const state = {
+    totalScenarios: 0,
+    completedScenarios: 0,
+    finishedSteps: 0,
+    failedSteps: 0,
+    currentScenarioIndex: 0,
+    currentScenario: '',
+    currentScenarioError: '',
+    currentStep: '',
+    spinnerIndex: 0,
+    spinnerTimer: null,
+    stopped: false,
+  };
+
+  function color(code, text) {
+    if (!useColor) return text;
+    return `\x1b[${code}m${text}\x1b[0m`;
+  }
+
+  function clearStatusLine() {
+    if (!interactive) return;
+    process.stdout.write('\r\x1b[2K');
+  }
+
+  function writeLine(line) {
+    if (interactive) {
+      clearStatusLine();
+      process.stdout.write(`${line}\n`);
+      render();
+      return;
+    }
+    process.stdout.write(`${line}\n`);
+  }
+
+  function totalLabel() {
+    return state.totalScenarios > 0 ? String(state.totalScenarios) : '?';
+  }
+
+  function activeLabel() {
+    if (state.currentStep) return `Running: ${truncateText(state.currentStep, 56)}`;
+    if (state.currentScenario) return `Scenario: ${truncateText(state.currentScenario, 56)}`;
+    return 'Waiting for next update';
+  }
+
+  function statusLine() {
+    const spinner = state.currentStep ? spinnerFrames[state.spinnerIndex % spinnerFrames.length] : '=';
+    const bar = buildProgressBar(state.completedScenarios, state.totalScenarios || 1);
+    const stepSummary = `${state.finishedSteps} step${state.finishedSteps === 1 ? '' : 's'}${state.failedSteps ? `, ${state.failedSteps} failed` : ''}`;
+    return `[${prefix}] ${spinner} ${bar} ${state.completedScenarios}/${totalLabel()} scenarios | ${stepSummary} | ${activeLabel()}`;
+  }
+
+  function render() {
+    if (!interactive || state.stopped) return;
+    clearStatusLine();
+    process.stdout.write(statusLine());
+  }
+
+  function startSpinner() {
+    if (!interactive || state.spinnerTimer || state.stopped) return;
+    state.spinnerTimer = setInterval(() => {
+      state.spinnerIndex = (state.spinnerIndex + 1) % spinnerFrames.length;
+      render();
+    }, 80);
+    if (typeof state.spinnerTimer.unref === 'function') {
+      state.spinnerTimer.unref();
+    }
+  }
+
+  function stopSpinner() {
+    if (!state.spinnerTimer) return;
+    clearInterval(state.spinnerTimer);
+    state.spinnerTimer = null;
+  }
+
+  function handleInteractiveEvent(event) {
+    if (event.type === 'run:start') {
+      state.totalScenarios = Number(event.totalScenarios) || state.totalScenarios;
+      writeLine(`[${prefix}] Prepared ${state.totalScenarios || '?'} scenario${state.totalScenarios === 1 ? '' : 's'} for execution`);
+      return;
+    }
+
+    if (event.type === 'scenario:start') {
+      state.currentScenarioIndex = Number(event.index) || (state.completedScenarios + 1);
+      state.totalScenarios = Math.max(state.totalScenarios, state.currentScenarioIndex);
+      state.currentScenario = String(event.scenario || `Scenario ${state.currentScenarioIndex}`);
+      state.currentScenarioError = '';
+      state.currentStep = '';
+      writeLine(`[${prefix}] Scenario ${state.currentScenarioIndex}/${totalLabel()}: ${state.currentScenario}`);
+      return;
+    }
+
+    if (event.type === 'step' && event.status === 'start') {
+      state.currentStep = String(event.title || 'Step');
+      startSpinner();
+      render();
+      return;
+    }
+
+    if (event.type === 'step' && event.status === 'ok') {
+      state.finishedSteps += 1;
+      state.currentStep = '';
+      stopSpinner();
+      render();
+      return;
+    }
+
+    if (event.type === 'step' && event.status === 'fail') {
+      state.finishedSteps += 1;
+      state.failedSteps += 1;
+      state.currentScenarioError = event.error ? String(event.error) : '';
+      state.currentStep = '';
+      stopSpinner();
+      writeLine(`[${prefix}] ${color('31', 'FAIL')} ${event.title || 'Step'}${state.currentScenarioError ? `: ${truncateText(state.currentScenarioError, 180)}` : ''}`);
+      return;
+    }
+
+    if (event.type === 'scenario:complete') {
+      state.completedScenarios = Math.max(state.completedScenarios, Number(event.index) || state.completedScenarios + 1);
+      stopSpinner();
+      state.currentStep = '';
+      const scenarioName = String(event.scenario || state.currentScenario || `Scenario ${state.completedScenarios}`);
+      const status = event.passed === false ? color('31', 'FAIL') : color('32', 'PASS');
+      const detail = event.passed === false && state.currentScenarioError
+        ? `: ${truncateText(state.currentScenarioError, 180)}`
+        : '';
+      state.currentScenario = '';
+      writeLine(`[${prefix}] ${status} ${state.completedScenarios}/${totalLabel()} ${scenarioName}${detail}`);
+      state.currentScenarioError = '';
+    }
+  }
+
+  return {
+    event(event) {
+      if (!event || typeof event !== 'object') return;
+      if (!interactive) {
+        logEvent(event);
+        return;
+      }
+      handleInteractiveEvent(event);
+    },
+    info(message) {
+      writeLine(`[${prefix}] ${message}`);
+    },
+    warn(message) {
+      writeLine(`[${prefix}] Warning: ${message}`);
+    },
+    error(message) {
+      writeLine(`[${prefix}] ${message}`);
+    },
+    stop() {
+      state.stopped = true;
+      stopSpinner();
+      clearStatusLine();
+    },
+  };
 }
 
 async function runCommand(opts) {
@@ -289,14 +476,16 @@ async function runCommand(opts) {
     throw new Error('Service did not return any prepared tests');
   }
 
-  console.log(`[assert] Prepared ${tests.length} Playwright test(s)`);
-  console.log(`[assert] Executing locally from ${workDir}`);
+  const reporter = createRunReporter({ prefix: 'assert' });
+  reporter.info(`Prepared ${tests.length} Playwright test file${tests.length === 1 ? '' : 's'}`);
+  reporter.info(`Executing locally from ${workDir}`);
 
   let results;
   try {
     const { executePreparedTests } = require('./executor');
-    results = await executePreparedTests(tests, runId, { workDir, onEvent: logEvent });
+    results = await executePreparedTests(tests, runId, { workDir, onEvent: reporter.event });
   } catch (err) {
+    reporter.stop();
     const message = err && err.message ? err.message : String(err);
     try {
       await request('POST', `${opts.apiBase}/v1/runs/${runId}/results`, apiKey, {
@@ -308,6 +497,7 @@ async function runCommand(opts) {
     }
     throw err;
   }
+  reporter.stop();
 
   try {
     await uploadScreenshots(opts.apiBase, apiKey, workDir, runId, results);
@@ -341,7 +531,9 @@ module.exports = {
   collectMarkdownFiles,
   request,
   ensureWorkDir,
+  toAbsoluteUrl,
   uploadScreenshots,
   runnerErrorResult,
   logEvent,
+  createRunReporter,
 };

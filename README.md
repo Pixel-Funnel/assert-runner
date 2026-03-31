@@ -65,6 +65,7 @@ Environment variables:
 - `ASSERT_API_URL`: optional, defaults to `https://api.assert.click`
 - `ASSERT_WORK_DIR`: optional, defaults to a temp directory
 - `ASSERT_POLL_INTERVAL_MS`: optional, defaults to `5000`
+- `ASSERT_IDLE_LOG_INTERVAL_MS`: optional, defaults to `60000`
 
 ## Input format
 

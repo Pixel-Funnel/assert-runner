@@ -103,16 +103,25 @@ function loadDefinitionsForPreparedTest(preparedTest, onEvent) {
 }
 
 async function executePreparedTests(preparedTests, runId, { workDir, onEvent = () => {} } = {}) {
+  const loadedTests = [];
+  let totalScenarios = 0;
+
+  for (const preparedTest of preparedTests || []) {
+    const { definitions, activeExecutionRef } = loadDefinitionsForPreparedTest(preparedTest, onEvent);
+    if (!definitions.length) {
+      throw new Error(`Prepared test "${preparedTest?.source_path || preparedTest?.playwright_path || 'unknown'}" did not register any tests`);
+    }
+    loadedTests.push({ preparedTest, definitions, activeExecutionRef });
+    totalScenarios += definitions.length;
+  }
+
+  try { onEvent({ type: 'run:start', totalScenarios }); } catch {}
+
   const browser = await chromium.launch({ headless: true });
   const results = [];
 
   try {
-    for (const preparedTest of preparedTests || []) {
-      const { definitions, activeExecutionRef } = loadDefinitionsForPreparedTest(preparedTest, onEvent);
-      if (!definitions.length) {
-        throw new Error(`Prepared test "${preparedTest?.source_path || preparedTest?.playwright_path || 'unknown'}" did not register any tests`);
-      }
-
+    for (const { preparedTest, definitions, activeExecutionRef } of loadedTests) {
       for (const definition of definitions) {
         const scenarioIndex = results.length + 1;
         const scenarioName = definition.name || preparedTest?.scenario_name || preparedTest?.source_path || `Scenario ${scenarioIndex}`;
@@ -164,7 +173,15 @@ async function executePreparedTests(preparedTests, runId, { workDir, onEvent = (
           steps,
         });
 
-        try { onEvent({ type: 'scenario:complete', index: scenarioIndex, passed }); } catch {}
+        try {
+          onEvent({
+            type: 'scenario:complete',
+            index: scenarioIndex,
+            scenario: scenarioName,
+            passed,
+            stepCount: steps.length,
+          });
+        } catch {}
       }
     }
   } finally {
