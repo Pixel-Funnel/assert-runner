@@ -6,7 +6,7 @@
   "homepage": "https://assert.click",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Pixel-Funnel/assert-runner.git"
+    "url": "git+https://github.com/Pixel-Funnel/assert-runner.git"
   },
   "engines": {
     "node": ">=18"
@@ -27,5 +27,8 @@
   },
   "scripts": {
     "postinstall": "node -e \"require('child_process').execSync('npx playwright install chromium --with-deps', { stdio: 'inherit' })\" || true"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

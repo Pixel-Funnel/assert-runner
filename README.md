@@ -53,6 +53,7 @@ Exit code:
 ### `assert-runner`
 
 Poll Assert for prepared jobs, execute them locally, and post results back.
+This is for organisations using the self-hosted runner queue. For ad hoc local runs, use `assert run`.
 
 ```bash
 ASSERT_API_KEY=your_key_here assert-runner

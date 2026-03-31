@@ -24,8 +24,14 @@ async function pollJob() {
     const res = await request('GET', `${API_BASE}/v1/runner/jobs`, API_KEY, undefined, 30000);
     return res.job || null;
   } catch (err) {
-    if (/invalid|unauthorized|forbidden/i.test(err?.message || '')) {
+    const message = err?.message || '';
+    if (/invalid|unauthorized|forbidden/i.test(message)) {
       console.error('Unauthorized — check your ASSERT_API_KEY');
+      process.exit(1);
+    }
+    if (/self-hosted runner is not enabled/i.test(message)) {
+      console.error('Self-hosted runner is not enabled for this organisation.');
+      console.error('Use `assert run <file-or-dir>` for one-off local runs, or enable self-hosted runners in Assert.');
       process.exit(1);
     }
     throw err;
