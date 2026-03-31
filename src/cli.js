@@ -44,7 +44,6 @@ function parseArgs(argv) {
     inputs: [],
     configPath: process.env.ASSERT_CONFIG || null,
     projectId: null,
-    apiBase: null,
     workDir: null,
   };
 
@@ -52,10 +51,6 @@ function parseArgs(argv) {
     const arg = args[i];
     if (arg === '--project' || arg === '--project-id') {
       opts.projectId = args[++i] || null;
-      continue;
-    }
-    if (arg === '--api-url') {
-      opts.apiBase = (args[++i] || opts.apiBase || DEFAULT_API_BASE).replace(/\/$/, '');
       continue;
     }
     if (arg === '--work-dir') {

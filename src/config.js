@@ -226,7 +226,6 @@ function resolveCliConfig(rawOpts, defaults = {}) {
   const env = defaults.env || process.env;
   const loaded = loadAssertConfig({ cwd: defaults.cwd, configPath: rawOpts.configPath || env.ASSERT_CONFIG });
   const common = loaded.config || {};
-  const local = loaded.localConfig || {};
   const configDir = loaded.configDir || defaults.cwd || process.cwd();
 
   return {
@@ -237,13 +236,7 @@ function resolveCliConfig(rawOpts, defaults = {}) {
       env.ASSERT_PROJECT_ID ||
       readString(common, ['projectId', 'project_id']) ||
       null,
-    apiBase:
-      (rawOpts.apiBase ||
-        env.ASSERT_API_URL ||
-        env.ASSERT_BASE_URL ||
-        readString(local, ['apiUrl', 'baseUrl', 'hostUrl']) ||
-        defaults.apiBase ||
-        '').replace(/\/$/, ''),
+    apiBase: String(defaults.apiBase || '').replace(/\/$/, ''),
     workDir:
       resolvePathFrom(configDir, rawOpts.workDir) ||
       (env.ASSERT_WORK_DIR ? path.resolve(env.ASSERT_WORK_DIR) : null) ||
@@ -259,21 +252,13 @@ function resolveRunnerConfig(rawOpts = {}, defaults = {}) {
   const env = defaults.env || process.env;
   const loaded = loadAssertConfig({ cwd: defaults.cwd, configPath: rawOpts.configPath || env.ASSERT_CONFIG });
   const common = loaded.config || {};
-  const local = loaded.localConfig || {};
   const runner = sectionFor(common, 'runner');
-  const localRunner = sectionFor(local, 'runner');
   const configDir = loaded.configDir || defaults.cwd || process.cwd();
 
   return {
     config: loaded,
     apiKey: resolveApiKey(env, common, runner),
-    apiBase:
-      (env.ASSERT_API_URL ||
-        env.ASSERT_BASE_URL ||
-        readString(localRunner, ['apiUrl', 'baseUrl', 'hostUrl']) ||
-        readString(local, ['apiUrl', 'baseUrl', 'hostUrl']) ||
-        defaults.apiBase ||
-        '').replace(/\/$/, ''),
+    apiBase: String(defaults.apiBase || '').replace(/\/$/, ''),
     workDir:
       (env.ASSERT_WORK_DIR ? path.resolve(env.ASSERT_WORK_DIR) : null) ||
       resolvePathFrom(configDir, readString(runner, ['workDir'])) ||

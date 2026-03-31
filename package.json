@@ -1,7 +1,7 @@
 {
   "name": "@assert-click/runner",
   "version": "1.0.3",
-  "description": "Self-hosted runner for Assert — polls for test jobs and executes them with Playwright on your own infrastructure",
+  "description": "CLI runner for Assert — run Markdown scenarios locally or in CI with Playwright and send results back to Assert",
   "license": "MIT",
   "homepage": "https://assert.click",
   "repository": {

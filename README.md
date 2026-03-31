@@ -10,12 +10,30 @@ It provides two executables:
 ## Requirements
 
 - Node.js `>=18`
-- An Assert API key, usually provided via `ASSERT_API_KEY`
+- A project-scoped Assert key, either stored in `assert.config.json` or provided via `ASSERT_API_KEY`
 
 ## Install
 
 ```bash
 npm install -g @assert-click/runner
+```
+
+## Quick start
+
+Create `assert.config.json` in your repo:
+
+```json
+{
+  "projectApiKey": "assert_project_key_here",
+  "projectId": "project_123",
+  "input": ["tests/**/*.assert.md"]
+}
+```
+
+Then run from the repo root:
+
+```bash
+assert
 ```
 
 ## Commands
@@ -25,13 +43,13 @@ npm install -g @assert-click/runner
 Upload local Markdown scenario files to Assert, execute the prepared tests locally, and send results back to the service.
 
 ```bash
-ASSERT_API_KEY=your_key_here assert run ./tests/
+assert run
 ```
 
 You can also run without passing paths if `assert.config.json` defines `input`:
 
 ```bash
-ASSERT_API_KEY=your_key_here assert run
+assert
 ```
 
 Arguments:
@@ -86,8 +104,6 @@ The runner will look for these files from the current directory upward:
 
 `assert.config.local.json` is merged on top of `assert.config.json`.
 
-For safety, API host overrides are only read from `ASSERT_API_URL` or `assert.config.local.json`. A committed `assert.config.json` cannot change the Assert API host.
-
 Recommended setup:
 
 - Commit `assert.config.json`
@@ -126,6 +142,8 @@ If you prefer env-based secrets instead of committing the key:
 - a folder path
 - a glob pattern such as `tests/**/*.assert.md`
 - an array mixing all of the above
+
+`assert.config.local.json` is the place for local-only overrides such as a different local key or other machine-specific settings.
 
 ## Input format
 
