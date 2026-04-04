@@ -1,16 +1,20 @@
 # @assert-click/runner
 
-CLI package for running Assert tests from your own machine or CI.
+Run your [Assert](https://assert.click) E2E scenarios locally or in CI. Write tests in plain Markdown — Assert generates the Playwright execution, this runner executes it and sends results back to your dashboard.
 
-It provides two executables:
+**[Sign up free at assert.click](https://assert.click)** to get your API key and project ID before using this package.
 
-- `assert`
-- `assert-runner`
+## How it works
+
+1. You write scenarios in plain-English Markdown (`.assert.md` files)
+2. `assert run` uploads them to Assert, which generates and prepares Playwright tests
+3. The runner executes the tests locally in a real Chromium browser
+4. Results and failure screenshots are sent back to your [Assert dashboard](https://assert.click)
 
 ## Requirements
 
 - Node.js `>=18`
-- A project-scoped Assert key, either stored in `assert.config.json` or provided via `ASSERT_API_KEY`
+- A project-scoped Assert key — get one at [assert.click](https://assert.click)
 
 ## Install
 
@@ -30,11 +34,25 @@ Create `assert.config.json` in your repo:
 }
 ```
 
-Then run from the repo root:
+Write a scenario in `tests/login.assert.md`:
+
+```markdown
+URL: https://example.com/login
+SCENARIO: User logs in
+PROCESS:
+  - Fill "email" with "user@example.com"
+  - Fill "password" with "secret"
+  - Click "Sign in"
+EXPECT: Dashboard
+```
+
+Then run from your repo root:
 
 ```bash
 assert
 ```
+
+Results appear in your [Assert dashboard](https://assert.click) with step-level pass/fail and failure screenshots.
 
 ## Commands
 
@@ -149,18 +167,17 @@ If you prefer env-based secrets instead of committing the key:
 
 `assert.config.local.json` is the place for local-only overrides such as a different local key or other machine-specific settings.
 
-## Input format
+## CI integration
 
-`assert run` expects Markdown scenario files. Example:
+Add Assert to your CI pipeline by running `assert` as a step. Set `ASSERT_API_KEY` as a secret environment variable in your CI provider.
 
-```markdown
-URL: https://example.com/login
-SCENARIO: User logs in
-PROCESS:
-  - Fill "email" with "user@example.com"
-  - Fill "password" with "secret"
-  - Click "Sign in"
-EXPECT: Dashboard
+Example GitHub Actions step:
+
+```yaml
+- name: Run Assert E2E tests
+  run: npx @assert-click/runner
+  env:
+    ASSERT_API_KEY: ${{ secrets.ASSERT_API_KEY }}
 ```
 
 ## License

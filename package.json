@@ -31,5 +31,18 @@
   },
   "publishConfig": {
     "access": "public"
-  }
+  },
+  "keywords": [
+    "assert",
+    "playwright",
+    "e2e",
+    "testing",
+    "cli",
+    "test-runner",
+    "automation",
+    "ci",
+    "end-to-end",
+    "markdown",
+    "ai-testing"
+  ]
 }
