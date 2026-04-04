@@ -1,6 +1,6 @@
 {
   "name": "@assert-click/runner",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "CLI runner for Assert — run Markdown scenarios locally or in CI with Playwright and send results back to Assert",
   "license": "MIT",
   "homepage": "https://assert.click",
