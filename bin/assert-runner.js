@@ -4,7 +4,7 @@
 const path = require('path');
 const os = require('os');
 const { executePreparedTests } = require('../src/executor');
-const { request, ensureWorkDir, uploadScreenshots, runnerErrorResult, createRunReporter } = require('../src/cli');
+const { request, ensureWorkDir, cleanupRunArtifacts, uploadScreenshots, runnerErrorResult, createRunReporter } = require('../src/cli');
 const { resolveRunnerConfig, CONFIG_FILE, LOCAL_CONFIG_FILE } = require('../src/config');
 
 function printUsage() {
@@ -14,6 +14,7 @@ function printUsage() {
 Environment:
   ASSERT_API_KEY              Preferred API key env var
   ASSERT_WORK_DIR             Optional work directory
+  ASSERT_KEEP_LOCAL_ARTIFACTS Keep per-run local artifacts after upload (default: false)
   ASSERT_POLL_INTERVAL_MS     Optional poll interval (default: 5000)
   ASSERT_IDLE_LOG_INTERVAL_MS Optional idle log interval (default: 60000)
 
@@ -71,6 +72,7 @@ const API_BASE = runtimeConfig.apiBase;
 const POLL_INTERVAL_MS = Number(runtimeConfig.pollIntervalMs || DEFAULTS.pollIntervalMs);
 const IDLE_LOG_INTERVAL_MS = Number(runtimeConfig.idleLogIntervalMs || DEFAULTS.idleLogIntervalMs);
 const WORK_DIR = runtimeConfig.workDir || DEFAULTS.workDir;
+const KEEP_LOCAL_ARTIFACTS = Boolean(runtimeConfig.keepLocalArtifacts);
 
 if (!API_KEY) {
   console.error('Error: Assert API key is required.');
@@ -169,8 +171,10 @@ async function tick() {
     }
     reporter.stop();
 
+    let uploadedScreenshots = false;
     try {
       await uploadScreenshots(API_BASE, API_KEY, WORK_DIR, runId, results);
+      uploadedScreenshots = true;
     } catch (err) {
       console.warn(`[${timestamp()}] [assert-runner] Warning: failed to upload screenshots for run ${runId}: ${err?.message || err}`);
     }
@@ -178,6 +182,9 @@ async function tick() {
     const passed = results.every((r) => r.passed !== false);
     log(`Run ${runId} complete — ${passed ? 'PASSED' : 'FAILED'} (${results.filter((r) => r.passed !== false).length}/${results.length} passed)`);
     await postResults(runId, results);
+    if (!KEEP_LOCAL_ARTIFACTS && (uploadedScreenshots || !results.some((result) => Array.isArray(result?.steps) && result.steps.some((step) => step?.screenshot)))) {
+      cleanupRunArtifacts(WORK_DIR, runId);
+    }
   } catch (err) {
     if (!connected) {
       logError(`Initial poll failed: ${err?.message || err}`);

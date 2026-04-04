@@ -66,6 +66,7 @@ Environment variables:
 
 - `ASSERT_API_KEY`: preferred API key env var
 - `ASSERT_WORK_DIR`: optional, defaults to a temp directory
+- `ASSERT_KEEP_LOCAL_ARTIFACTS`: optional, keeps local per-run files after upload for debugging
 - `ASSERT_PROJECT_ID`: optional default project ID
 - `ASSERT_CONFIG`: optional path to a config file or directory
 
@@ -91,6 +92,7 @@ Environment variables:
 
 - `ASSERT_API_KEY`: preferred API key env var
 - `ASSERT_WORK_DIR`: optional, defaults to a temp directory
+- `ASSERT_KEEP_LOCAL_ARTIFACTS`: optional, keeps local per-run files after upload for debugging
 - `ASSERT_POLL_INTERVAL_MS`: optional, defaults to `5000`
 - `ASSERT_IDLE_LOG_INTERVAL_MS`: optional, defaults to `60000`
 - `ASSERT_CONFIG`: optional path to a config file or directory
@@ -118,9 +120,11 @@ Example:
   "projectId": "project_123",
   "input": ["tests/**/*.assert.md", "smoke/login.assert.md"],
   "workDir": ".assert",
+  "keepLocalArtifacts": false,
   "runner": {
     "pollIntervalMs": 5000,
-    "idleLogIntervalMs": 60000
+    "idleLogIntervalMs": 60000,
+    "keepLocalArtifacts": false
   }
 }
 ```
@@ -134,7 +138,7 @@ If you prefer env-based secrets instead of committing the key:
 }
 ```
 
-`workDir` is the local scratch directory used while running tests. Assert stores generated Playwright files, temporary auth state, screenshots, and other runtime artifacts there. Most users can ignore it and use the default temp directory. Set it only if you want a stable path in CI or want to inspect artifacts after a run.
+`workDir` is the local scratch directory used while running tests. Assert stores failure screenshots and runtime scratch files there during execution. By default, per-run folders are deleted after results and screenshots are uploaded. Set `ASSERT_KEEP_LOCAL_ARTIFACTS=true` or `keepLocalArtifacts: true` only if you want to inspect local artifacts after a run.
 
 `input` can be:
 

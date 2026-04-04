@@ -20,6 +20,7 @@ function printUsage() {
 Environment:
   ASSERT_API_KEY         Preferred API key env var
   ASSERT_WORK_DIR        Optional work directory (default: ${DEFAULT_WORK_DIR})
+  ASSERT_KEEP_LOCAL_ARTIFACTS  Keep per-run local artifacts after upload (default: false)
 
 Config files:
   ${CONFIG_FILE}         Shared project config, discovered from the current directory upward
@@ -246,6 +247,14 @@ function ensureWorkDir(workDir) {
   fs.mkdirSync(process.env.ASSERT_RUNS_DIR, { recursive: true });
   fs.mkdirSync(process.env.MD_CACHE_DIR, { recursive: true });
   return resolved;
+}
+
+function cleanupRunArtifacts(workDir, runId) {
+  if (!workDir || !runId) return;
+  const runDir = path.join(path.resolve(workDir), 'runs', String(runId));
+  try {
+    fs.rmSync(runDir, { recursive: true, force: true });
+  } catch {}
 }
 
 function buildLocalArtifactPath(workDir, runId, publicPath) {
@@ -624,6 +633,7 @@ async function runCommand(opts) {
   reporter.info(`Executing locally from ${workDir}`);
 
   let results;
+  let uploadedScreenshots = false;
   try {
     const { executePreparedTests } = require('./executor');
     results = await executePreparedTests(tests, runId, { workDir, onEvent: reporter.event, auth });
@@ -644,11 +654,16 @@ async function runCommand(opts) {
 
   try {
     await uploadScreenshots(opts.apiBase, apiKey, workDir, runId, results);
+    uploadedScreenshots = true;
   } catch (err) {
     console.warn(`[assert] Warning: failed to upload screenshots: ${err.message || err}`);
   }
   const passed = results.every(result => result && result.passed !== false);
   await request('POST', `${opts.apiBase}/v1/runs/${runId}/results`, apiKey, { results, passed }, 30000);
+
+  if (!opts.keepLocalArtifacts && (uploadedScreenshots || !results.some((result) => Array.isArray(result?.steps) && result.steps.some((step) => step?.screenshot)))) {
+    cleanupRunArtifacts(workDir, runId);
+  }
 
   console.log(`\n[assert] Run ${runId} ${passed ? 'PASSED' : 'FAILED'}`);
   return passed ? 0 : 1;
@@ -670,6 +685,7 @@ async function main(argv = process.argv.slice(2)) {
     env: process.env,
     apiBase: DEFAULT_API_BASE,
     workDir: DEFAULT_WORK_DIR,
+    keepLocalArtifacts: false,
   });
   return runCommand(opts);
 }
@@ -680,6 +696,7 @@ module.exports = {
   collectMarkdownFiles,
   request,
   ensureWorkDir,
+  cleanupRunArtifacts,
   toAbsoluteUrl,
   uploadScreenshots,
   runnerErrorResult,

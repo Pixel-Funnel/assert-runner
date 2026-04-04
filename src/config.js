@@ -159,6 +159,22 @@ function readNumber(source, keys) {
   return null;
 }
 
+function readBoolean(source, keys) {
+  if (!isPlainObject(source)) return null;
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value !== 0;
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      if (!normalized) continue;
+      if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+      if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+    }
+  }
+  return null;
+}
+
 function readStringArray(source, keys) {
   if (!isPlainObject(source)) return null;
   for (const key of keys) {
@@ -242,6 +258,10 @@ function resolveCliConfig(rawOpts, defaults = {}) {
       (env.ASSERT_WORK_DIR ? path.resolve(env.ASSERT_WORK_DIR) : null) ||
       resolvePathFrom(configDir, readString(common, ['workDir'])) ||
       defaults.workDir,
+    keepLocalArtifacts:
+      readBoolean({ value: env.ASSERT_KEEP_LOCAL_ARTIFACTS }, ['value']) ??
+      readBoolean(common, ['keepLocalArtifacts', 'keep_local_artifacts']) ??
+      Boolean(defaults.keepLocalArtifacts),
     inputs: rawOpts.inputs.length
       ? rawOpts.inputs
       : resolvePathArray(configDir, readInputEntries(common, ['input']) ?? []),
@@ -264,6 +284,11 @@ function resolveRunnerConfig(rawOpts = {}, defaults = {}) {
       resolvePathFrom(configDir, readString(runner, ['workDir'])) ||
       resolvePathFrom(configDir, readString(common, ['workDir'])) ||
       defaults.workDir,
+    keepLocalArtifacts:
+      readBoolean({ value: env.ASSERT_KEEP_LOCAL_ARTIFACTS }, ['value']) ??
+      readBoolean(runner, ['keepLocalArtifacts', 'keep_local_artifacts']) ??
+      readBoolean(common, ['keepLocalArtifacts', 'keep_local_artifacts']) ??
+      Boolean(defaults.keepLocalArtifacts),
     pollIntervalMs:
       readNumber({ value: env.ASSERT_POLL_INTERVAL_MS }, ['value']) ||
       readNumber(runner, ['pollIntervalMs', 'poll_interval_ms']) ||
