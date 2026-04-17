@@ -139,6 +139,8 @@ Example:
   "input": ["tests/**/*.assert.md", "smoke/login.assert.md"],
   "workDir": ".assert",
   "keepLocalArtifacts": false,
+  "show_browser": false,
+  "run_only_failed": false,
   "runner": {
     "pollIntervalMs": 5000,
     "idleLogIntervalMs": 60000,
@@ -155,6 +157,10 @@ If you prefer env-based secrets instead of committing the key:
   "projectId": "project_123"
 }
 ```
+
+`show_browser` opens a visible Chromium window so you can watch tests execute in real time. Defaults to `false` (headless). Not recommended for CI — use it locally when debugging a failing scenario.
+
+`run_only_failed` re-runs only the scenarios that failed in the previous run. After each run the runner writes a `.assert-last-run.json` cache file next to `assert.config.json` recording which files failed. On the next run, only those files are submitted. If the cache does not exist or there were no failures, all tests run as normal. You may want to add `.assert-last-run.json` to `.gitignore`. Defaults to `false`.
 
 `workDir` is the local scratch directory used while running tests. Assert stores failure screenshots and runtime scratch files there during execution. By default, per-run folders are deleted after results and screenshots are uploaded. Set `ASSERT_KEEP_LOCAL_ARTIFACTS=true` or `keepLocalArtifacts: true` only if you want to inspect local artifacts after a run.
 
