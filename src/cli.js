@@ -636,7 +636,7 @@ async function runCommand(opts) {
   let uploadedScreenshots = false;
   try {
     const { executePreparedTests } = require('./executor');
-    results = await executePreparedTests(tests, runId, { workDir, onEvent: reporter.event, auth });
+    results = await executePreparedTests(tests, runId, { workDir, onEvent: reporter.event, auth, showBrowser: opts.showBrowser });
   } catch (err) {
     reporter.stop();
     const message = err && err.message ? err.message : String(err);

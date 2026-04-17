@@ -262,6 +262,8 @@ function resolveCliConfig(rawOpts, defaults = {}) {
       readBoolean({ value: env.ASSERT_KEEP_LOCAL_ARTIFACTS }, ['value']) ??
       readBoolean(common, ['keepLocalArtifacts', 'keep_local_artifacts']) ??
       Boolean(defaults.keepLocalArtifacts),
+    showBrowser:
+      readBoolean(common, ['show_browser']) ?? false,
     inputs: rawOpts.inputs.length
       ? rawOpts.inputs
       : resolvePathArray(configDir, readInputEntries(common, ['input']) ?? []),

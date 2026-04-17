@@ -830,7 +830,7 @@ function loadDefinitionsForPreparedTest(preparedTest, onEvent) {
   return { definitions, activeExecutionRef };
 }
 
-async function executePreparedTests(preparedTests, runId, { workDir, onEvent = () => {}, auth = null } = {}) {
+async function executePreparedTests(preparedTests, runId, { workDir, onEvent = () => {}, auth = null, showBrowser = false } = {}) {
   const loadedTests = [];
   let totalScenarios = 0;
 
@@ -845,7 +845,7 @@ async function executePreparedTests(preparedTests, runId, { workDir, onEvent = (
 
   try { onEvent({ type: 'run:start', totalScenarios }); } catch {}
 
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ headless: !showBrowser });
   const results = [];
   let storageState = null;
 
