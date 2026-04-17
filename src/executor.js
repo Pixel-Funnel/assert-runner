@@ -10,6 +10,265 @@ function stripAnsi(value) {
   return String(value || '').replace(/\u001b\[[0-9;]*m/g, '');
 }
 
+function extractLocatorSubject(msg) {
+  const t = msg.match(/getByText\(\s*['"](.+?)['"]/);
+  if (t) return `"${t[1]}"`;
+  const l = msg.match(/getByLabel\(\s*['"](.+?)['"]/);
+  if (l) return `"${l[1]}"`;
+  const p = msg.match(/getByPlaceholder\(\s*['"](.+?)['"]/);
+  if (p) return `"${p[1]}"`;
+  const r = msg.match(/getByRole\(\s*['"]?(\w+)['"]?(?:,\s*\{[^}]*name:\s*['"](.+?)['"])?/);
+  if (r) return r[2] ? `"${r[2]}"` : `${r[1]} element`;
+  return null;
+}
+
+function humanizeError(err) {
+  const msg = stripAnsi(err?.message || String(err));
+
+  // 1. Strict mode: locator matched multiple elements
+  const strictMatch = msg.match(/strict mode violation[^:]*:\s*(\S+)\s*resolved to (\d+) elements/i);
+  if (strictMatch) {
+    const subject = extractLocatorSubject(strictMatch[1]) || strictMatch[1];
+    return `${subject} matched ${strictMatch[2]} elements on the page — use a more specific label or add "in container-name" to narrow it down`;
+  }
+
+  // 2. Element not visible (toBeVisible / waitFor visible)
+  if (/toBeVisible\(\) failed/i.test(msg) || /No matching locator became visible/i.test(msg)) {
+    const subject = extractLocatorSubject(msg) || 'Element';
+    return `${subject} was not visible on the page`;
+  }
+
+  // 3. Locator timeout — element never appeared in DOM
+  const locatorTimeoutMatch = msg.match(/locator\.[a-z]+: Timeout (\d+)ms exceeded/i);
+  if (locatorTimeoutMatch) {
+    const subject = extractLocatorSubject(msg) || 'Element';
+    const secs = Math.round(Number(locatorTimeoutMatch[1]) / 1000);
+    return `${subject} did not appear on the page within ${secs}s`;
+  }
+
+  // 4. Element detached from DOM
+  if (/is not attached to the (DOM|document)/i.test(msg)) {
+    const subject = extractLocatorSubject(msg) || 'Element';
+    return `${subject} disappeared from the page before the step could complete`;
+  }
+
+  // 5. Click intercepted — covered by another element
+  if (/intercepts pointer events|covered by another element|pointer-events: none/i.test(msg)) {
+    const subject = extractLocatorSubject(msg) || 'Element';
+    return `${subject} is hidden behind another element and could not be clicked`;
+  }
+
+  // 6. Element not enabled / disabled
+  if (/element is not enabled|is disabled/i.test(msg)) {
+    const subject = extractLocatorSubject(msg) || 'Element';
+    return `${subject} is disabled`;
+  }
+
+  // 7. Element not editable / read-only
+  if (/element is not editable|is read-?only/i.test(msg)) {
+    const subject = extractLocatorSubject(msg) || 'Element';
+    return `${subject} is read-only and cannot be edited`;
+  }
+
+  // 8. Navigation timeout (page.goto)
+  if (/page\.goto.*timeout|navigation timeout/i.test(msg)) {
+    const urlMatch = msg.match(/https?:\/\/[^\s'"]+/);
+    return urlMatch ? `Page timed out loading ${urlMatch[0]}` : 'Page took too long to load';
+  }
+
+  // 9/10. Network error (includes SSL/cert errors)
+  const netMatch = msg.match(/net::(ERR_\w+)/);
+  if (netMatch) {
+    const code = netMatch[1];
+    if (/ERR_CERT/i.test(code)) return `Page has an SSL certificate error (${code})`;
+    if (/ERR_CONNECTION_REFUSED/i.test(code)) return 'Connection refused — is the server running?';
+    if (/ERR_NAME_NOT_RESOLVED/i.test(code)) return 'Domain could not be resolved — check the URL';
+    return `Page failed to load (${code})`;
+  }
+
+  // 11. Page or target closed unexpectedly
+  if (/target.*closed|page.*closed|browser.*closed/i.test(msg)) {
+    return 'The browser tab closed unexpectedly';
+  }
+
+  // 12. Execution context destroyed (page navigated mid-step)
+  if (/execution context was destroyed|navigating/i.test(msg)) {
+    return 'The page navigated away while the step was running';
+  }
+
+  // 13. toHaveText mismatch
+  const haveTextMatch = msg.match(/toHaveText\(\) failed[\s\S]*?Expected string:\s*(.+?)\n[\s\S]*?Received string:\s*(.+?)\n/i);
+  if (haveTextMatch || /toHaveText\(\) failed/i.test(msg)) {
+    if (haveTextMatch) return `Text didn't match — expected "${haveTextMatch[1].trim()}", got "${haveTextMatch[2].trim()}"`;
+    return 'Element text did not match what was expected';
+  }
+
+  // 14. toHaveURL mismatch
+  const haveUrlMatch = msg.match(/toHaveURL\(\) failed[\s\S]*?Expected string:\s*(.+?)\n[\s\S]*?Received string:\s*(.+?)\n/i);
+  if (haveUrlMatch || /toHaveURL\(\) failed/i.test(msg)) {
+    if (haveUrlMatch) return `Ended up on the wrong page — expected "${haveUrlMatch[1].trim()}", got "${haveUrlMatch[2].trim()}"`;
+    return 'The page URL did not match what was expected';
+  }
+
+  // 15. toHaveValue mismatch
+  const haveValueMatch = msg.match(/toHaveValue\(\) failed[\s\S]*?Expected string:\s*(.+?)\n[\s\S]*?Received string:\s*(.+?)\n/i);
+  if (haveValueMatch || /toHaveValue\(\) failed/i.test(msg)) {
+    if (haveValueMatch) return `Field value didn't match — expected "${haveValueMatch[1].trim()}", got "${haveValueMatch[2].trim()}"`;
+    return 'Field value did not match what was expected';
+  }
+
+  // 16. Select option not found
+  if (/no options were found|option.*not found|selectOption/i.test(msg)) {
+    const optMatch = msg.match(/option ['"](.+?)['"]/i);
+    return optMatch ? `Option "${optMatch[1]}" was not found in the dropdown` : 'The dropdown option was not found';
+  }
+
+  // 17. Unable to fill (custom — no matching input found)
+  const unableToFillMatch = msg.match(/Unable to fill ["']?(.+?)["']?$/i);
+  if (unableToFillMatch) {
+    return `Could not find a field matching "${unableToFillMatch[1].trim()}" on the page`;
+  }
+
+  // 18. Unable to submit login form (custom)
+  if (/Unable to submit/i.test(msg)) {
+    return 'Could not find a submit button to click';
+  }
+
+  // 19. waitForNavigation timeout
+  if (/waitForNavigation.*Timeout|waitForURL.*Timeout/i.test(msg)) {
+    return 'The page did not navigate as expected';
+  }
+
+  // 20. Element outside viewport
+  if (/outside.*viewport|not.*in.*viewport/i.test(msg)) {
+    const subject = extractLocatorSubject(msg) || 'Element';
+    return `${subject} is outside the visible area of the page`;
+  }
+
+  // 21. toHaveCount mismatch
+  const haveCountMatch = msg.match(/toHaveCount\(\) failed[\s\S]*?Expected:?\s*(\d+)[\s\S]*?Received:?\s*(\d+)/i);
+  if (haveCountMatch || /toHaveCount\(\) failed/i.test(msg)) {
+    if (haveCountMatch) return `Expected ${haveCountMatch[1]} item${haveCountMatch[1] === '1' ? '' : 's'} but found ${haveCountMatch[2]}`;
+    return 'The number of matching elements did not match what was expected';
+  }
+
+  // 22. toBeChecked failed
+  if (/toBeChecked\(\) failed|expected.*to be checked|expected.*not to be checked/i.test(msg)) {
+    const subject = extractLocatorSubject(msg) || 'Checkbox';
+    return `${subject} was not in the expected checked state`;
+  }
+
+  // 23. toContainText failed
+  const containTextMatch = msg.match(/toContainText\(\) failed[\s\S]*?Expected string:\s*(.+?)\n/i);
+  if (containTextMatch || /toContainText\(\) failed/i.test(msg)) {
+    if (containTextMatch) return `Page did not contain the text "${containTextMatch[1].trim()}"`;
+    return 'Expected text was not found on the page';
+  }
+
+  // 24. toHaveAttribute failed
+  const haveAttrMatch = msg.match(/toHaveAttribute\(\) failed[\s\S]*?Expected:?\s*['"]?(.+?)['"]?\n[\s\S]*?Received:?\s*['"]?(.+?)['"]?\n/i);
+  if (haveAttrMatch || /toHaveAttribute\(\) failed/i.test(msg)) {
+    if (haveAttrMatch) return `Attribute didn't match — expected "${haveAttrMatch[1].trim()}", got "${haveAttrMatch[2].trim()}"`;
+    return 'Element attribute did not match what was expected';
+  }
+
+  // 25. toHaveClass failed
+  const haveClassMatch = msg.match(/toHaveClass\(\) failed[\s\S]*?Expected:?\s*['"]?(.+?)['"]?\n/i);
+  if (haveClassMatch || /toHaveClass\(\) failed/i.test(msg)) {
+    if (haveClassMatch) return `Element did not have the expected class "${haveClassMatch[1].trim()}"`;
+    return 'Element did not have the expected CSS class';
+  }
+
+  // 26. Element not focusable
+  if (/element is not focusable|not focusable/i.test(msg)) {
+    const subject = extractLocatorSubject(msg) || 'Element';
+    return `${subject} cannot be focused — it may be hidden or not interactive`;
+  }
+
+  // 27. Too many redirects
+  if (/too many redirects/i.test(msg)) {
+    return 'The page is stuck in a redirect loop';
+  }
+
+  // 28. waitForLoadState timeout
+  if (/waitForLoadState.*Timeout|waitForLoadState.*exceeded/i.test(msg)) {
+    return 'The page did not finish loading in time';
+  }
+
+  // 29. waitForFunction timeout — custom condition never met
+  if (/waitForFunction.*Timeout|waitForFunction.*exceeded/i.test(msg)) {
+    return 'A page condition was not met in time';
+  }
+
+  // 30. page.evaluate / JS execution error
+  if (/page\.evaluate|frame\.evaluate/i.test(msg)) {
+    const jsErrMatch = msg.match(/(?:page|frame)\.evaluate[^:]*:\s*(.+)/i);
+    return jsErrMatch ? `JavaScript error on the page: ${jsErrMatch[1].trim()}` : 'A JavaScript error occurred on the page';
+  }
+
+  // 31. Protocol / DevTools connection error
+  if (/protocol error|cdp.*error|devtools.*error/i.test(msg)) {
+    return 'Lost connection to the browser — the page may have crashed';
+  }
+
+  // 32. Frame detached (distinct from page closed)
+  if (/frame.*detached|frame was detached/i.test(msg)) {
+    return 'The page section being tested was removed from the page';
+  }
+
+  // 33. HTTP error status on navigation
+  const httpErrorMatch = msg.match(/(?:received|got|status)\s+(4\d\d|5\d\d)/i) || msg.match(/\b(404|403|401|500|502|503)\b/);
+  if (httpErrorMatch) {
+    const code = httpErrorMatch[1];
+    if (code === '401' || code === '403') return `Access denied (HTTP ${code}) — the page requires authentication`;
+    if (code === '404') return `Page not found (HTTP 404) — check the URL`;
+    if (code === '500') return `The server returned an error (HTTP 500)`;
+    return `The page returned an error (HTTP ${code})`;
+  }
+
+  // 34. Unexpected alert/dialog blocking interaction
+  if (/dialog.*blocking|unexpected.*alert|unhandled.*dialog/i.test(msg)) {
+    return 'An unexpected popup or alert is blocking the page';
+  }
+
+  // 35. Hover/mouse timeout
+  if (/locator\.hover.*Timeout|hover.*exceeded/i.test(msg)) {
+    const subject = extractLocatorSubject(msg) || 'Element';
+    return `${subject} did not respond to hover`;
+  }
+
+  // 36. Drag and drop failed
+  if (/locator\.drag|dragTo.*Timeout|drag.*exceeded/i.test(msg)) {
+    return 'The drag and drop operation failed or timed out';
+  }
+
+  // 37. File input error
+  if (/setInputFiles|input.*type.*file|file.*upload/i.test(msg)) {
+    return 'File upload failed — the input may not be a file field';
+  }
+
+  // 38. waitForResponse / waitForRequest timeout
+  if (/waitForResponse.*Timeout|waitForRequest.*Timeout/i.test(msg)) {
+    return 'An expected network request did not happen in time';
+  }
+
+  // 39. JSHandle / element handle disposed
+  if (/jshandle.*disposed|element.*handle.*disposed/i.test(msg)) {
+    return 'The element was removed from the page before the step could finish';
+  }
+
+  // 40. Invalid CSS selector syntax
+  if (/is not valid.*selector|failed to execute.*querySelector|syntaxerror.*selector/i.test(msg)) {
+    return 'Invalid selector — the locator syntax is not valid';
+  }
+
+  // General timeout fallback
+  if (/timed out|timeout.*exceeded/i.test(msg)) return 'Step timed out';
+
+  // Fall back to first line only — strip multiline Playwright noise
+  return msg.split('\n')[0].trim();
+}
+
 function ensureDir(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true });
 }
@@ -799,7 +1058,7 @@ function createTestApi(activeExecutionRef, definitions, onEvent) {
       return result;
     } catch (err) {
       step.status = 'fail';
-      step.error = stripAnsi(err?.message || String(err));
+      step.error = humanizeError(err);
       if (!step.screenshot) {
         try {
           step.screenshot = await active.writeScreenshot(active.page, active.steps.length);
