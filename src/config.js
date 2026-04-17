@@ -264,6 +264,8 @@ function resolveCliConfig(rawOpts, defaults = {}) {
       Boolean(defaults.keepLocalArtifacts),
     showBrowser:
       readBoolean(common, ['show_browser']) ?? false,
+    retryFailed:
+      readBoolean(common, ['run_only_failed']) ?? false,
     inputs: rawOpts.inputs.length
       ? rawOpts.inputs
       : resolvePathArray(configDir, readInputEntries(common, ['input']) ?? []),

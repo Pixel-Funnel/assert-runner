@@ -1180,6 +1180,7 @@ async function executePreparedTests(preparedTests, runId, { workDir, onEvent = (
         results.push({
           index: scenarioIndex,
           scenario: scenarioName,
+          source_path: preparedTest?.source_path || null,
           passed,
           steps,
         });

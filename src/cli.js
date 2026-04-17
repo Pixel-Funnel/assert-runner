@@ -238,6 +238,29 @@ async function request(method, url, apiKey, body, timeoutMs = 30000) {
   }
 }
 
+const LAST_RUN_CACHE_FILE = '.assert-last-run.json';
+
+function readLastRunCache(configDir) {
+  try {
+    const cachePath = path.join(configDir || process.cwd(), LAST_RUN_CACHE_FILE);
+    const raw = fs.readFileSync(cachePath, 'utf8');
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed.failed) ? parsed.failed : [];
+  } catch {
+    return null;
+  }
+}
+
+function writeLastRunCache(configDir, results) {
+  try {
+    const failed = (results || [])
+      .filter(r => r && r.passed === false && r.source_path)
+      .map(r => r.source_path);
+    const cachePath = path.join(configDir || process.cwd(), LAST_RUN_CACHE_FILE);
+    fs.writeFileSync(cachePath, JSON.stringify({ failed, ts: Date.now() }, null, 2), 'utf8');
+  } catch {}
+}
+
 function ensureWorkDir(workDir) {
   const resolved = path.resolve(workDir);
   process.env.ASSERT_RUNNER_WORK_DIR = resolved;
@@ -594,9 +617,28 @@ async function runCommand(opts) {
     throw new Error('At least one Markdown file, directory, or glob pattern is required. Pass a path, or set input in assert.config.json');
   }
 
-  const mdFiles = collectMarkdownFiles(opts.inputs);
+  let mdFiles = collectMarkdownFiles(opts.inputs);
   if (!mdFiles.length) {
     throw new Error('No Markdown files found');
+  }
+
+  const configDir = opts.config && opts.config.configDir ? opts.config.configDir : process.cwd();
+  if (opts.retryFailed) {
+    const failedPaths = readLastRunCache(configDir);
+    if (!failedPaths) {
+      console.log('[assert] No last run cache found — running all tests');
+    } else if (!failedPaths.length) {
+      console.log('[assert] No failures in last run — nothing to retry');
+      return 0;
+    } else {
+      mdFiles = mdFiles.filter(f => failedPaths.includes(f.relPath));
+      if (!mdFiles.length) {
+        console.log('[assert] No matching files found for failed tests — running all tests');
+        mdFiles = collectMarkdownFiles(opts.inputs);
+      } else {
+        console.log(`[assert] Retrying ${mdFiles.length} previously failed test file${mdFiles.length === 1 ? '' : 's'}`);
+      }
+    }
   }
 
   const workDir = ensureWorkDir(opts.workDir);
@@ -660,6 +702,7 @@ async function runCommand(opts) {
   }
   const passed = results.every(result => result && result.passed !== false);
   await request('POST', `${opts.apiBase}/v1/runs/${runId}/results`, apiKey, { results, passed }, 30000);
+  writeLastRunCache(configDir, results);
 
   if (!opts.keepLocalArtifacts && (uploadedScreenshots || !results.some((result) => Array.isArray(result?.steps) && result.steps.some((step) => step?.screenshot)))) {
     cleanupRunArtifacts(workDir, runId);
