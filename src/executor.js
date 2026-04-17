@@ -32,10 +32,20 @@ function humanizeError(err) {
     return `${subject} matched ${strictMatch[2]} elements on the page — use a more specific label or add "in container-name" to narrow it down`;
   }
 
-  // 2. Element not visible (toBeVisible / waitFor visible)
-  if (/toBeVisible\(\) failed/i.test(msg) || /No matching locator became visible/i.test(msg)) {
+  // 2a. toBeVisible timed out — element exists but wasn't visible within the timeout
+  if (/toBeVisible\(\) failed/i.test(msg)) {
     const subject = extractLocatorSubject(msg) || 'Element';
-    return `${subject} was not visible on the page`;
+    const timeoutMatch = msg.match(/timeout (\d+)ms/i);
+    const secs = timeoutMatch ? Math.round(Number(timeoutMatch[1]) / 1000) : null;
+    return secs
+      ? `${subject} did not become visible within ${secs}s — it may still be loading`
+      : `${subject} did not become visible — it may still be loading`;
+  }
+
+  // 2b. waitFor visible timed out — locator matched nothing visible
+  if (/No matching locator became visible/i.test(msg)) {
+    const subject = extractLocatorSubject(msg) || 'Element';
+    return `${subject} was not visible — the page may need more time to load`;
   }
 
   // 3. Locator timeout — element never appeared in DOM
