@@ -12,20 +12,49 @@ const DEFAULT_API_BASE = 'https://api.assert.click';
 const DEFAULT_WORK_DIR = path.join(os.tmpdir(), 'assert-runner');
 const USER_AGENT = 'assert-cli/1.0';
 
+// ─── Brand palette (truecolor ANSI; gracefully degrades when colors disabled) ──
+function makeColors(enabled) {
+  const tc = (r, g, b) => (t) => enabled ? `\x1b[38;2;${r};${g};${b}m${t}\x1b[0m` : t;
+  return {
+    orange: tc(247, 112, 21),   // #f77015 — brand
+    green:  tc(34, 197, 94),    // #22c55e — pass
+    red:    tc(239, 68, 68),    // #ef4444 — fail
+    sky:    tc(56, 189, 248),   // #38bdf8 — info
+    dim:    (t) => enabled ? `\x1b[2m${t}\x1b[0m` : t,
+    bold:   (t) => enabled ? `\x1b[1m${t}\x1b[0m` : t,
+    reset:  (t) => enabled ? `\x1b[0m${t}\x1b[0m` : t,
+  };
+}
+
+function printLogo() {
+  const enabled = process.stdout.isTTY && !process.env.NO_COLOR;
+  const p = makeColors(enabled);
+  process.stdout.write('\n');
+  process.stdout.write(`  ${p.orange('▲')}  ${p.bold(p.orange('assert'))}\n`);
+  process.stdout.write('\n');
+}
+
 function printUsage() {
-  console.log(`Usage:
-  assert run [file-dir-or-glob ...more paths] [--project <id>] [--work-dir <path>] [--config <path>]
-  assert [file-dir-or-glob ...more paths]
-
-Environment:
-  ASSERT_API_KEY         Preferred API key env var
-  ASSERT_WORK_DIR        Optional work directory (default: ${DEFAULT_WORK_DIR})
-  ASSERT_KEEP_LOCAL_ARTIFACTS  Keep per-run local artifacts after upload (default: false)
-
-Config files:
-  ${CONFIG_FILE}         Shared project config, discovered from the current directory upward
-  ${LOCAL_CONFIG_FILE}   Local override file, merged on top when present
-`);
+  const enabled = process.stdout.isTTY && !process.env.NO_COLOR;
+  const p = makeColors(enabled);
+  printLogo();
+  console.log([
+    p.bold('Usage:'),
+    `  ${p.orange('assert run')} [file-dir-or-glob] [options]`,
+    '',
+    p.bold('Options:'),
+    `  ${p.orange('--project <id>')}    Project ID override`,
+    `  ${p.orange('--work-dir <path>')} Local working directory (default: ${DEFAULT_WORK_DIR})`,
+    `  ${p.orange('--config <path>')}   Config file path`,
+    '',
+    p.bold('Environment:'),
+    `  ${p.orange('ASSERT_API_KEY')}    API key`,
+    '',
+    p.bold('Config files:'),
+    `  ${p.dim(CONFIG_FILE)}`,
+    `  ${p.dim(LOCAL_CONFIG_FILE)}`,
+    '',
+  ].join('\n'));
 }
 
 function parseArgs(argv) {
@@ -416,18 +445,20 @@ function truncateText(value, maxLength) {
   return `${text.slice(0, Math.max(0, maxLength - 3))}...`;
 }
 
-function buildProgressBar(completed, total) {
+function buildProgressBar(completed, total, p) {
   const safeTotal = Math.max(Number(total) || 0, 1);
-  const width = Math.max(10, Math.min(24, Math.floor((process.stdout.columns || 80) / 4)));
+  const width = Math.max(10, Math.min(20, Math.floor((process.stdout.columns || 80) / 5)));
   const ratio = Math.max(0, Math.min(1, completed / safeTotal));
   const filled = Math.round(width * ratio);
-  return `[${'#'.repeat(filled)}${'-'.repeat(width - filled)}]`;
+  const bar = '█'.repeat(filled) + '░'.repeat(width - filled);
+  return p ? p.orange(bar) : bar;
 }
 
 function createRunReporter({ prefix = 'assert' } = {}) {
   const interactive = Boolean(process.stdout.isTTY);
   const useColor = interactive && !Object.prototype.hasOwnProperty.call(process.env, 'NO_COLOR');
-  const spinnerFrames = ['-', '\\', '|', '/'];
+  const p = makeColors(useColor);
+  const spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
   const state = {
     totalScenarios: 0,
     completedScenarios: 0,
@@ -441,11 +472,6 @@ function createRunReporter({ prefix = 'assert' } = {}) {
     spinnerTimer: null,
     stopped: false,
   };
-
-  function color(code, text) {
-    if (!useColor) return text;
-    return `\x1b[${code}m${text}\x1b[0m`;
-  }
 
   function clearStatusLine() {
     if (!interactive) return;
@@ -466,17 +492,17 @@ function createRunReporter({ prefix = 'assert' } = {}) {
     return state.totalScenarios > 0 ? String(state.totalScenarios) : '?';
   }
 
-  function activeLabel() {
-    if (state.currentStep) return `Running: ${truncateText(state.currentStep, 56)}`;
-    if (state.currentScenario) return `Scenario: ${truncateText(state.currentScenario, 56)}`;
-    return 'Waiting for next update';
-  }
-
   function statusLine() {
-    const spinner = state.currentStep ? spinnerFrames[state.spinnerIndex % spinnerFrames.length] : '=';
-    const bar = buildProgressBar(state.completedScenarios, state.totalScenarios || 1);
-    const stepSummary = `${state.finishedSteps} step${state.finishedSteps === 1 ? '' : 's'}${state.failedSteps ? `, ${state.failedSteps} failed` : ''}`;
-    return `[${prefix}] ${spinner} ${bar} ${state.completedScenarios}/${totalLabel()} scenarios | ${stepSummary} | ${activeLabel()}`;
+    const spinner = p.orange(spinnerFrames[state.spinnerIndex % spinnerFrames.length]);
+    const bar = buildProgressBar(state.completedScenarios, state.totalScenarios || 1, useColor ? p : null);
+    const prog = p.dim(`${state.completedScenarios}/${totalLabel()}`);
+    const stepCount = p.dim(`${state.finishedSteps} step${state.finishedSteps === 1 ? '' : 's'}${state.failedSteps ? `, ${state.failedSteps} failed` : ''}`);
+    const active = state.currentStep
+      ? p.dim(truncateText(state.currentStep, 52))
+      : state.currentScenario
+        ? p.dim(truncateText(state.currentScenario, 52))
+        : '';
+    return `  ${spinner}  ${bar} ${prog}  ${stepCount}${active ? `  ${active}` : ''}`;
   }
 
   function render() {
@@ -502,24 +528,28 @@ function createRunReporter({ prefix = 'assert' } = {}) {
     state.spinnerTimer = null;
   }
 
+  function tag() {
+    return p.dim(`[${prefix}]`);
+  }
+
   function handleInteractiveEvent(event) {
     if (event.type === 'auth:start') {
-      writeLine(`[${prefix}] Auth: signing in${event.url ? ` at ${event.url}` : ''}`);
+      writeLine(`${tag()} ${p.sky('Auth')}  signing in${event.url ? ` at ${event.url}` : ''}`);
       return;
     }
 
     if (event.type === 'auth:redirect') {
-      writeLine(`[${prefix}] Auth: login required${event.targetUrl ? ` for ${event.targetUrl}` : ''}`);
+      writeLine(`${tag()} ${p.sky('Auth')}  login required${event.targetUrl ? ` for ${event.targetUrl}` : ''}`);
       return;
     }
 
     if (event.type === 'auth:complete') {
-      writeLine(`[${prefix}] Auth: session ready`);
+      writeLine(`${tag()} ${p.sky('Auth')}  session ready`);
       return;
     }
 
     if (event.type === 'auth:error') {
-      writeLine(`[${prefix}] Auth: failed${event.message ? `: ${truncateText(event.message, 180)}` : ''}`);
+      writeLine(`${tag()} ${p.red('Auth')}  failed${event.message ? `: ${truncateText(event.message, 180)}` : ''}`);
       if (event.details) {
         writeLine(formatStructuredBlock(event.details));
       }
@@ -528,7 +558,7 @@ function createRunReporter({ prefix = 'assert' } = {}) {
 
     if (event.type === 'run:start') {
       state.totalScenarios = Number(event.totalScenarios) || state.totalScenarios;
-      writeLine(`[${prefix}] Prepared ${state.totalScenarios || '?'} scenario${state.totalScenarios === 1 ? '' : 's'} for execution`);
+      writeLine(`${tag()} Prepared ${p.bold(String(state.totalScenarios || '?'))} scenario${state.totalScenarios === 1 ? '' : 's'}`);
       return;
     }
 
@@ -538,7 +568,7 @@ function createRunReporter({ prefix = 'assert' } = {}) {
       state.currentScenario = String(event.scenario || `Scenario ${state.currentScenarioIndex}`);
       state.currentScenarioError = '';
       state.currentStep = '';
-      writeLine(`[${prefix}] Scenario ${state.currentScenarioIndex}/${totalLabel()}: ${state.currentScenario}`);
+      writeLine(`\n${tag()} ${p.bold(p.orange(`Scenario ${state.currentScenarioIndex}/${totalLabel()}`))}  ${state.currentScenario}`);
       return;
     }
 
@@ -550,20 +580,22 @@ function createRunReporter({ prefix = 'assert' } = {}) {
     }
 
     if (event.type === 'step' && event.status === 'ok') {
+      const title = state.currentStep || String(event.title || 'Step');
       state.finishedSteps += 1;
       state.currentStep = '';
       stopSpinner();
-      render();
+      writeLine(`  ${p.green('✓')}  ${p.dim(title)}`);
       return;
     }
 
     if (event.type === 'step' && event.status === 'fail') {
+      const title = state.currentStep || String(event.title || 'Step');
       state.finishedSteps += 1;
       state.failedSteps += 1;
       state.currentScenarioError = event.error ? String(event.error) : '';
       state.currentStep = '';
       stopSpinner();
-      writeLine(`[${prefix}] ${color('31', 'FAIL')} ${event.title || 'Step'}${state.currentScenarioError ? `: ${truncateText(state.currentScenarioError, 180)}` : ''}`);
+      writeLine(`  ${p.red('✗')}  ${title}${state.currentScenarioError ? `\n     ${p.red(truncateText(state.currentScenarioError, 200))}` : ''}`);
       return;
     }
 
@@ -571,14 +603,15 @@ function createRunReporter({ prefix = 'assert' } = {}) {
       state.completedScenarios = Math.max(state.completedScenarios, Number(event.index) || state.completedScenarios + 1);
       stopSpinner();
       state.currentStep = '';
+      const passed = event.passed !== false;
+      const icon = passed ? p.green('✓') : p.red('✗');
+      const label = passed ? p.green('PASS') : p.red('FAIL');
       const scenarioName = String(event.scenario || state.currentScenario || `Scenario ${state.completedScenarios}`);
-      const status = event.passed === false ? color('31', 'FAIL') : color('32', 'PASS');
-      const detail = event.passed === false && state.currentScenarioError
-        ? `: ${truncateText(state.currentScenarioError, 180)}`
-        : '';
+      const detail = !passed && state.currentScenarioError ? `\n     ${p.red(truncateText(state.currentScenarioError, 200))}` : '';
       state.currentScenario = '';
-      writeLine(`[${prefix}] ${status} ${state.completedScenarios}/${totalLabel()} ${scenarioName}${detail}`);
+      writeLine(`${icon}  ${label}  ${scenarioName}${detail}`);
       state.currentScenarioError = '';
+      render();
     }
   }
 
@@ -592,13 +625,13 @@ function createRunReporter({ prefix = 'assert' } = {}) {
       handleInteractiveEvent(event);
     },
     info(message) {
-      writeLine(`[${prefix}] ${message}`);
+      writeLine(`${p.dim(`[${prefix}]`)} ${message}`);
     },
     warn(message) {
-      writeLine(`[${prefix}] Warning: ${message}`);
+      writeLine(`${p.dim(`[${prefix}]`)} ${p.orange('Warning:')} ${message}`);
     },
     error(message) {
-      writeLine(`[${prefix}] ${message}`);
+      writeLine(`${p.dim(`[${prefix}]`)} ${p.red(message)}`);
     },
     stop() {
       state.stopped = true;
@@ -609,6 +642,11 @@ function createRunReporter({ prefix = 'assert' } = {}) {
 }
 
 async function runCommand(opts) {
+  printLogo();
+
+  const useColor = Boolean(process.stdout.isTTY) && !Object.prototype.hasOwnProperty.call(process.env, 'NO_COLOR');
+  const p = makeColors(useColor);
+
   const apiKey = opts.apiKey;
   if (!apiKey) {
     throw new Error('Assert API key is required. Set ASSERT_API_KEY, configure projectApiKeyEnv, or store projectApiKey in assert.config.json');
@@ -622,21 +660,23 @@ async function runCommand(opts) {
     throw new Error('No Markdown files found');
   }
 
+  const reporter = createRunReporter({ prefix: 'assert' });
+
   const configDir = opts.config && opts.config.configDir ? opts.config.configDir : process.cwd();
   if (opts.retryFailed) {
     const failedPaths = readLastRunCache(configDir);
     if (!failedPaths) {
-      console.log('[assert] No last run cache found — running all tests');
+      reporter.info('No last run cache found — running all tests');
     } else if (!failedPaths.length) {
-      console.log('[assert] No failures in last run — nothing to retry');
+      reporter.info('No failures in last run — nothing to retry');
       return 0;
     } else {
       mdFiles = mdFiles.filter(f => failedPaths.includes(f.relPath));
       if (!mdFiles.length) {
-        console.log('[assert] No matching files found for failed tests — running all tests');
+        reporter.info('No matching files found for failed tests — running all tests');
         mdFiles = collectMarkdownFiles(opts.inputs);
       } else {
-        console.log(`[assert] Retrying ${mdFiles.length} previously failed test file${mdFiles.length === 1 ? '' : 's'}`);
+        reporter.info(`Retrying ${mdFiles.length} previously failed test file${mdFiles.length === 1 ? '' : 's'}`);
       }
     }
   }
@@ -654,8 +694,7 @@ async function runCommand(opts) {
     throw new Error('Service did not return a run ID');
   }
 
-  console.log(`[assert] Created run ${runId}`);
-  console.log(`[assert] Uploading ${mdFiles.length} Markdown file(s)`);
+  reporter.info(`Uploading ${p.bold(String(mdFiles.length))} file${mdFiles.length === 1 ? '' : 's'}`);
   for (const file of mdFiles) {
     await request('POST', `${opts.apiBase}/v1/runs/${runId}/files`, apiKey, {
       path: file.relPath,
@@ -670,9 +709,7 @@ async function runCommand(opts) {
     throw new Error('Service did not return any prepared tests');
   }
 
-  const reporter = createRunReporter({ prefix: 'assert' });
-  reporter.info(`Prepared ${tests.length} Playwright test file${tests.length === 1 ? '' : 's'}`);
-  reporter.info(`Executing locally from ${workDir}`);
+  reporter.info(`Running ${p.bold(String(tests.length))} scenario${tests.length === 1 ? '' : 's'} locally`);
 
   let results;
   let uploadedScreenshots = false;
@@ -688,7 +725,7 @@ async function runCommand(opts) {
         passed: false,
       }, 30000);
     } catch (postErr) {
-      console.warn(`[assert] Warning: failed to post runner error: ${postErr.message || postErr}`);
+      reporter.warn(`Failed to post runner error: ${postErr.message || postErr}`);
     }
     throw err;
   }
@@ -698,7 +735,7 @@ async function runCommand(opts) {
     await uploadScreenshots(opts.apiBase, apiKey, workDir, runId, results);
     uploadedScreenshots = true;
   } catch (err) {
-    console.warn(`[assert] Warning: failed to upload screenshots: ${err.message || err}`);
+    reporter.warn(`Failed to upload screenshots: ${err.message || err}`);
   }
   const passed = results.every(result => result && result.passed !== false);
   await request('POST', `${opts.apiBase}/v1/runs/${runId}/results`, apiKey, { results, passed }, 30000);
@@ -708,7 +745,18 @@ async function runCommand(opts) {
     cleanupRunArtifacts(workDir, runId);
   }
 
-  console.log(`\n[assert] Run ${runId} ${passed ? 'PASSED' : 'FAILED'}`);
+  const totalScenarios = results.length;
+  const passedScenarios = results.filter(r => r && r.passed !== false).length;
+  const failedScenarios = totalScenarios - passedScenarios;
+
+  process.stdout.write('\n');
+  if (passed) {
+    process.stdout.write(`  ${p.green('✓')}  ${p.bold(p.green('All tests passed'))}  ${p.dim(`${passedScenarios}/${totalScenarios} scenarios`)}\n`);
+  } else {
+    process.stdout.write(`  ${p.red('✗')}  ${p.bold(p.red('Tests failed'))}  ${p.dim(`${failedScenarios} failed, ${passedScenarios} passed, ${totalScenarios} total`)}\n`);
+  }
+  process.stdout.write(`  ${p.dim(`Run ${runId}`)}\n\n`);
+
   return passed ? 0 : 1;
 }
 
