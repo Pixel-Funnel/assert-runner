@@ -493,15 +493,21 @@ function createRunReporter({ prefix = 'assert' } = {}) {
   }
 
   function statusLine() {
-    const spinner = p.orange(spinnerFrames[state.spinnerIndex % spinnerFrames.length]);
+    const cols = Math.max(40, (process.stdout.columns || 80) - 1);
+    const spinnerCh = spinnerFrames[state.spinnerIndex % spinnerFrames.length];
+    const barWidth = Math.max(10, Math.min(20, Math.floor((process.stdout.columns || 80) / 5)));
+    const progCh = `${state.completedScenarios}/${totalLabel()}`;
+    const stepCh = `${state.finishedSteps} step${state.finishedSteps === 1 ? '' : 's'}${state.failedSteps ? `, ${state.failedSteps} failed` : ''}`;
+    // Measure fixed parts (no ANSI) to know how much room is left for the active label
+    const fixedLen = 2 + 1 + 2 + barWidth + 1 + progCh.length + 2 + stepCh.length; // "  ⠋  <bar> <prog>  <steps>"
+    const activeMax = Math.max(0, cols - fixedLen - 2); // 2 for "  " separator
+
+    const spinner = p.orange(spinnerCh);
     const bar = buildProgressBar(state.completedScenarios, state.totalScenarios || 1, useColor ? p : null);
-    const prog = p.dim(`${state.completedScenarios}/${totalLabel()}`);
-    const stepCount = p.dim(`${state.finishedSteps} step${state.finishedSteps === 1 ? '' : 's'}${state.failedSteps ? `, ${state.failedSteps} failed` : ''}`);
-    const active = state.currentStep
-      ? p.dim(truncateText(state.currentStep, 52))
-      : state.currentScenario
-        ? p.dim(truncateText(state.currentScenario, 52))
-        : '';
+    const prog = p.dim(progCh);
+    const stepCount = p.dim(stepCh);
+    const activeRaw = state.currentStep || state.currentScenario || '';
+    const active = activeMax > 6 && activeRaw ? p.dim(truncateText(activeRaw, activeMax)) : '';
     return `  ${spinner}  ${bar} ${prog}  ${stepCount}${active ? `  ${active}` : ''}`;
   }
 

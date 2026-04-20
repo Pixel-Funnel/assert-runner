@@ -16,6 +16,7 @@ function makeColors(enabled) {
 const p = makeColors(true);
 
 // Logo
+// Logo (matches printLogo() in cli.js)
 process.stdout.write('\n');
 process.stdout.write(`  ${p.orange('▲')}  ${p.bold(p.orange('assert'))}\n`);
 process.stdout.write('\n');
