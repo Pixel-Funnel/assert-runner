@@ -603,16 +603,23 @@ async function fillByGuess(page, field, value) {
   const raw = String(field || '').trim();
   const slug = slugify(raw);
   const re = new RegExp(escapeRegExp(raw), 'i');
+  const reAnchored = new RegExp('^' + escapeRegExp(raw) + '$', 'i');
   const candidates = [];
   const push = (locator) => { if (locator) candidates.push(locator); };
 
   if (raw) {
+    // Exact matches first — prevents substring data-assert/label from stealing the wrong field
+    // (e.g. "customer" must not match "Customer Reference" via data-assert* or getByLabel partial)
     push(page.locator(`[data-assert="${cssEscape(raw)}"]`).first());
     if (slug && slug !== raw) push(page.locator(`[data-assert="${cssEscape(slug)}"]`).first());
+    push(page.getByLabel(raw, { exact: true }).first());
+    push(page.getByLabel(reAnchored).first());
+    push(page.getByPlaceholder(raw, { exact: true }).first());
+    push(page.getByPlaceholder(reAnchored).first());
+    push(page.locator(`input[name="${cssEscape(raw)}"], textarea[name="${cssEscape(raw)}"], input[id="${cssEscape(raw)}"], textarea[id="${cssEscape(raw)}"]`).first());
+    // Substring / partial matches — lower priority
     push(page.locator(`[data-assert*="${cssEscape(raw)}" i]`).first());
     push(page.getByLabel(raw, { exact: false }).first());
-    push(page.getByPlaceholder(raw, { exact: false }).first());
-    push(page.locator(`input[name="${cssEscape(raw)}"], textarea[name="${cssEscape(raw)}"], input[id="${cssEscape(raw)}"], textarea[id="${cssEscape(raw)}"]`).first());
     push(page.locator(`input[name*="${cssEscape(raw)}" i], textarea[name*="${cssEscape(raw)}" i], input[id*="${cssEscape(raw)}" i], textarea[id*="${cssEscape(raw)}" i]`).first());
     push(page.getByLabel(re, { exact: false }).first());
     push(page.getByPlaceholder(re, { exact: false }).first());

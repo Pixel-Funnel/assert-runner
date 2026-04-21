@@ -6,6 +6,8 @@ const path = require('path');
 const dotenv = require('dotenv');
 const { resolveCliConfig, CONFIG_FILE, LOCAL_CONFIG_FILE } = require('./config');
 
+const PKG_VERSION = (() => { try { return require('../package.json').version; } catch { return ''; } })();
+
 dotenv.config();
 
 const DEFAULT_API_BASE = 'https://api.assert.click';
@@ -30,7 +32,7 @@ function printLogo() {
   const enabled = process.stdout.isTTY && !process.env.NO_COLOR;
   const p = makeColors(enabled);
   process.stdout.write('\n');
-  process.stdout.write(`  ${p.orange('▲')}  ${p.bold(p.orange('assert'))}\n`);
+  process.stdout.write(`  ${p.orange('▲')}  ${p.bold(p.orange('assert'))}${PKG_VERSION ? p.dim(` v${PKG_VERSION}`) : ''}\n`);
   process.stdout.write('\n');
 }
 
