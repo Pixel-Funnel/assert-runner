@@ -1161,10 +1161,18 @@ async function executePreparedTests(preparedTests, runId, { workDir, onEvent = (
         try { onEvent({ type: 'scenario:start', index: scenarioIndex, scenario: scenarioName }); } catch {}
 
         let passed = false;
+        let finalScreenshot = null;
         try {
           activeExecutionRef.current = { page: rawPage, steps, writeScreenshot, ensureLoggedIn };
           await definition.fn({ page, context, browser });
           passed = steps.every((step) => step.status !== 'fail');
+          try {
+            const relPath = path.posix.join('screenshots', `scenario_${scenarioIndex}_final.png`);
+            const targetPath = path.join(workDir, 'runs', runId, ...relPath.split('/'));
+            ensureDir(path.dirname(targetPath));
+            await rawPage.screenshot({ path: targetPath, fullPage: true });
+            finalScreenshot = toPublicArtifactPath(runId, relPath);
+          } catch {}
         } catch (err) {
           const message = stripAnsi(err?.message || String(err));
           const hasFailedStep = steps.some((step) => step.status === 'fail');
@@ -1200,6 +1208,7 @@ async function executePreparedTests(preparedTests, runId, { workDir, onEvent = (
           source_path: preparedTest?.source_path || null,
           passed,
           steps,
+          screenshot: finalScreenshot || null,
         });
 
         try {
@@ -1209,6 +1218,7 @@ async function executePreparedTests(preparedTests, runId, { workDir, onEvent = (
             scenario: scenarioName,
             passed,
             stepCount: steps.length,
+            screenshot: finalScreenshot,
           });
         } catch {}
       }
