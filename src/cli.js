@@ -352,27 +352,34 @@ async function uploadArtifact(apiBase, apiKey, runId, relPath, content, encoding
 async function uploadScreenshots(apiBase, apiKey, workDir, runId, results) {
   const uploaded = new Map();
   const failures = [];
+
+  async function uploadOne(publicPath, label) {
+    const info = buildLocalArtifactPath(workDir, runId, publicPath);
+    if (!info || !fs.existsSync(info.localPath)) {
+      failures.push(`${label}: local screenshot file missing`);
+      return null;
+    }
+    if (!uploaded.has(info.relPath)) {
+      try {
+        const content = fs.readFileSync(info.localPath).toString('base64');
+        const uploadedArtifact = await uploadArtifact(apiBase, apiKey, runId, info.relPath, content, 'base64');
+        uploaded.set(info.relPath, toAbsoluteUrl(apiBase, uploadedArtifact.url || publicPath));
+      } catch (err) {
+        failures.push(`${label}: ${err?.message || String(err)}`);
+        uploaded.set(info.relPath, null);
+      }
+    }
+    return uploaded.get(info.relPath);
+  }
+
   for (const scenario of results || []) {
     const steps = Array.isArray(scenario.steps) ? scenario.steps : [];
     for (const step of steps) {
       if (!step || !step.screenshot) continue;
-      const info = buildLocalArtifactPath(workDir, runId, step.screenshot);
-      if (!info || !fs.existsSync(info.localPath)) {
-        failures.push(`${step.title || 'Step'}: local screenshot file missing`);
-        step.screenshot = null;
-        continue;
-      }
-      if (!uploaded.has(info.relPath)) {
-        try {
-          const content = fs.readFileSync(info.localPath).toString('base64');
-          const uploadedArtifact = await uploadArtifact(apiBase, apiKey, runId, info.relPath, content, 'base64');
-          uploaded.set(info.relPath, toAbsoluteUrl(apiBase, uploadedArtifact.url || step.screenshot));
-        } catch (err) {
-          failures.push(`${step.title || 'Step'}: ${err?.message || String(err)}`);
-          uploaded.set(info.relPath, null);
-        }
-      }
-      step.screenshot = uploaded.get(info.relPath);
+      step.screenshot = await uploadOne(step.screenshot, step.title || 'Step');
+    }
+    if (scenario.screenshot) {
+      scenario.screenshot = await uploadOne(scenario.screenshot, `${scenario.scenario || 'Scenario'} final`);
     }
   }
   if (failures.length) {
@@ -749,7 +756,10 @@ async function runCommand(opts) {
   await request('POST', `${opts.apiBase}/v1/runs/${runId}/results`, apiKey, { results, passed }, 30000);
   writeLastRunCache(configDir, results);
 
-  if (!opts.keepLocalArtifacts && (uploadedScreenshots || !results.some((result) => Array.isArray(result?.steps) && result.steps.some((step) => step?.screenshot)))) {
+  const hasLocalScreenshots = results.some((result) =>
+    (Array.isArray(result?.steps) && result.steps.some((step) => step?.screenshot)) || result?.screenshot
+  );
+  if (!opts.keepLocalArtifacts && (uploadedScreenshots || !hasLocalScreenshots)) {
     cleanupRunArtifacts(workDir, runId);
   }
 
